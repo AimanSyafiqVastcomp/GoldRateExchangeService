@@ -16,6 +16,7 @@ using System.Linq;
 
 namespace GoldRatesExtractor
 {
+
     public partial class GoldRatesService : ServiceBase
     {
         private string connectionString;
@@ -28,6 +29,9 @@ namespace GoldRatesExtractor
         private string nodeJsPath;
         private string scriptPath;
         private int initialDelayMilliseconds;
+        private int navigationTimeoutMs = 30000;
+        private int waitAfterNavigationMs = 5000; 
+        private int scriptTimeoutMs = 60000;
 
         public GoldRatesService()
         {
@@ -298,6 +302,40 @@ namespace GoldRatesExtractor
                 else
                 {
                     LogInfo($"Using initial delay of {initialDelayMilliseconds}ms from app.config");
+                }
+
+                // Load web timeout settings
+                string navigationTimeoutStr = ConfigurationManager.AppSettings["NavigationTimeoutMs"];
+                if (!int.TryParse(navigationTimeoutStr, out navigationTimeoutMs) || navigationTimeoutMs <= 0)
+                {
+                    navigationTimeoutMs = 30000; // Default to 30 seconds if not specified or invalid
+                    LogInfo("NavigationTimeoutMs not specified or invalid in app.config. Defaulting to 30000ms");
+                }
+                else
+                {
+                    LogInfo($"Using navigation timeout of {navigationTimeoutMs}ms from app.config");
+                }
+
+                string waitAfterNavigationStr = ConfigurationManager.AppSettings["WaitAfterNavigationMs"];
+                if (!int.TryParse(waitAfterNavigationStr, out waitAfterNavigationMs) || waitAfterNavigationMs <= 0)
+                {
+                    waitAfterNavigationMs = 5000; // Default to 5 seconds if not specified or invalid
+                    LogInfo("WaitAfterNavigationMs not specified or invalid in app.config. Defaulting to 5000ms");
+                }
+                else
+                {
+                    LogInfo($"Using post-navigation wait of {waitAfterNavigationMs}ms from app.config");
+                }
+
+                string scriptTimeoutStr = ConfigurationManager.AppSettings["ScriptTimeoutMs"];
+                if (!int.TryParse(scriptTimeoutStr, out scriptTimeoutMs) || scriptTimeoutMs <= 0)
+                {
+                    scriptTimeoutMs = 60000; // Default to 60 seconds if not specified or invalid
+                    LogInfo("ScriptTimeoutMs not specified or invalid in app.config. Defaulting to 60000ms");
+                }
+                else
+                {
+                    LogInfo($"Using script timeout of {scriptTimeoutMs}ms from app.config");
                 }
 
                 LogInfo("Configuration loaded successfully");
@@ -607,6 +645,82 @@ exit %ERRORLEVEL%";
             }
         }
 
+        private void LogRecommendationBasedOnError(ScraperError error, int websiteOption)
+        {
+            string websiteName = websiteOption == 1 ? "TTTBullion" : "MSGold";
+            string recommendationHeader = $"RECOMMENDATION FOR {websiteName}:";
+
+            switch (error.ErrorType)
+            {
+                case "NAVIGATION_ERROR":
+                    LogError($"{recommendationHeader} The website may be down or inaccessible. Please check if {websiteName} is operational.");
+                    LogError($"{recommendationHeader} You may need to update the URL in the App.config file.");
+                    LogError($"{recommendationHeader} Consider temporarily switching to website option {(websiteOption == 1 ? "2" : "1")} in App.config.");
+                    break;
+
+                case "TABLE_NOT_FOUND":
+                    LogError($"{recommendationHeader} The website structure has likely changed. The gold rates table could not be found.");
+                    LogError($"{recommendationHeader} The script in goldExtractor.js needs to be updated to match the new website structure.");
+                    LogError($"{recommendationHeader} Update the script or switch to website option {(websiteOption == 1 ? "2" : "1")}.");
+                    break;
+
+                case "DATA_STRUCTURE_ERROR":
+                    LogError($"{recommendationHeader} The website's data format has changed. The table was found but data couldn't be extracted.");
+                    LogError($"{recommendationHeader} Update the extraction logic in goldExtractor.js to match the new structure.");
+                    break;
+
+                case "EXTRACTION_ERROR":
+                    LogError($"{recommendationHeader} Gold rates were not extractable from the website.");
+                    LogError($"{recommendationHeader} The script may need adjustments to find the correct data elements.");
+                    break;
+
+                case "NETWORK_ERROR":
+                    LogError($"{recommendationHeader} Network connection issues prevented accessing the website.");
+                    LogError($"{recommendationHeader} Check internet connectivity and firewall settings.");
+                    break;
+
+                default:
+                    LogError($"{recommendationHeader} An unknown error occurred while extracting data from {websiteName}.");
+                    LogError($"{recommendationHeader} Check the goldExtractor.js script and consider switching to website option {(websiteOption == 1 ? "2" : "1")}.");
+                    break;
+            }
+
+            // Log additional details if available
+            if (error.Details != null && error.Details.Count > 0)
+            {
+                LogError($"{recommendationHeader} Additional error details: {JsonConvert.SerializeObject(error.Details)}");
+            }
+        }
+
+        // Add a screenshot capture capability
+        private string CaptureScreenshot(int websiteOption)
+        {
+            try
+            {
+                string scriptDir = Path.GetDirectoryName(scriptPath);
+                string screenshotPath = Path.Combine(scriptDir, $"error_screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+
+                // Look for any screenshot that might have been saved by the script
+                string debugScreenshot = Path.Combine(scriptDir, "debug_screenshot.png");
+
+                if (File.Exists(debugScreenshot))
+                {
+                    // Copy it to a timestamped name for preservation
+                    File.Copy(debugScreenshot, screenshotPath, true);
+                    LogInfo($"Saved error screenshot to {screenshotPath}");
+                    return screenshotPath;
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                LogError($"Failed to capture/save screenshot: {ex.Message}");
+                return null;
+            }
+        }
+
+
         private async Task<DataTable> ExtractTTTBullionDataAsync(string url)
         {
             LogInfo("Beginning TTT Bullion data extraction using Node.js script");
@@ -622,7 +736,7 @@ exit %ERRORLEVEL%";
                 using (var process = new Process())
                 {
                     process.StartInfo.FileName = nodeJsPath;
-                    process.StartInfo.Arguments = $"\"{scriptPath}\" tttbullion \"{url}\"";
+                    process.StartInfo.Arguments = $"\"{scriptPath}\" tttbullion \"{url}\" {navigationTimeoutMs} {waitAfterNavigationMs}";
                     process.StartInfo.UseShellExecute = false;
                     process.StartInfo.RedirectStandardOutput = true;
                     process.StartInfo.RedirectStandardError = true;
@@ -631,6 +745,7 @@ exit %ERRORLEVEL%";
 
                     var outputData = new List<string>();
                     var errorData = new List<string>();
+                    ScraperError structuredError = null;
 
                     process.OutputDataReceived += (sender, e) =>
                     {
@@ -641,7 +756,24 @@ exit %ERRORLEVEL%";
                     process.ErrorDataReceived += (sender, e) =>
                     {
                         if (!string.IsNullOrEmpty(e.Data))
+                        {
                             errorData.Add(e.Data);
+
+                            // Look for structured error messages from the script
+                            if (e.Data.StartsWith("ERROR_JSON: "))
+                            {
+                                try
+                                {
+                                    string errorJson = e.Data.Substring("ERROR_JSON: ".Length);
+                                    structuredError = JsonConvert.DeserializeObject<ScraperError>(errorJson);
+                                    LogError($"Structured error from script: {structuredError.ErrorType} - {structuredError.Message}");
+                                }
+                                catch (Exception jsonEx)
+                                {
+                                    LogError($"Failed to parse error JSON: {jsonEx.Message}");
+                                }
+                            }
+                        }
                     };
 
                     LogInfo($"Running Node.js script for TTT Bullion: {process.StartInfo.Arguments}");
@@ -666,7 +798,11 @@ exit %ERRORLEVEL%";
                     {
                         foreach (var error in errorData)
                         {
-                            LogInfo($"Script debug: {error}");
+                            // Don't log the structured error JSON again
+                            if (!error.StartsWith("ERROR_JSON: "))
+                            {
+                                LogInfo($"Script debug: {error}");
+                            }
                         }
                     }
 
@@ -701,6 +837,12 @@ exit %ERRORLEVEL%";
                     else
                     {
                         LogError("No output produced by Node.js script.");
+
+                        // Log specific recommendations based on the error
+                        if (structuredError != null)
+                        {
+                            LogRecommendationBasedOnError(structuredError, 1); // 1 is the website option for TTTBullion
+                        }
                     }
                 }
             }
@@ -734,7 +876,7 @@ exit %ERRORLEVEL%";
                 using (var process = new Process())
                 {
                     process.StartInfo.FileName = nodeJsPath;
-                    process.StartInfo.Arguments = $"\"{scriptPath}\" msgold \"{url}\"";
+                    process.StartInfo.Arguments = $"\"{scriptPath}\" msgold \"{url}\" {navigationTimeoutMs} {waitAfterNavigationMs}";
                     process.StartInfo.UseShellExecute = false;
                     process.StartInfo.RedirectStandardOutput = true;
                     process.StartInfo.RedirectStandardError = true;
@@ -764,7 +906,7 @@ exit %ERRORLEVEL%";
                     // Wait for process to finish with a timeout
                     await Task.Run(() =>
                     {
-                        if (!process.WaitForExit(30000)) // 30 second timeout
+                        if (!process.WaitForExit(scriptTimeoutMs)) // 60 second timeout from variable
                         {
                             LogError("Node.js script took too long to execute. Killing process.");
                             try { process.Kill(); } catch { }
@@ -1034,6 +1176,15 @@ exit %ERRORLEVEL%";
                 }
             }
         }
+    }
+
+    //Error Handling
+    public class ScraperError
+    {
+        public string ErrorType { get; set; }
+        public string Message { get; set; }
+        public string Timestamp { get; set; }
+        public Dictionary<string, object> Details { get; set; }
     }
 
     // Data models for JSON deserialization
