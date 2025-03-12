@@ -9,7 +9,7 @@ namespace GoldRatesExtractor
     {
         public GoldRatesServiceInstaller()
         {
-            InitializeComponent(); // Just call it, don't implement it here
+            InitializeComponent(); 
         }
     }
 }

@@ -11,7 +11,7 @@ namespace GoldRatesExtractor
         /// </summary>
         static void Main(string[] args)
         {
-            // If running with -console argument, run as console application (useful for testing)
+            // If running with -console argument, run as console application
             if (args.Length > 0 && args[0].ToLower() == "-console")
             {
                 Console.WriteLine("Starting Gold Rates Extractor in console mode...");

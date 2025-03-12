@@ -31,7 +31,6 @@ namespace GoldRatesExtractor
 
         public GoldRatesService()
         {
-            // This must be called for Windows Service functionality
             InitializeComponent();
 
             // Create log directory if it doesn't exist
@@ -78,10 +77,9 @@ namespace GoldRatesExtractor
 
             try
             {
-                // Load configuration
                 LoadConfiguration();
 
-                // Find Node.js (for script execution)
+                // for script execution
                 FindNodeJs();
 
                 // Make sure the script exists
@@ -1014,7 +1012,7 @@ exit %ERRORLEVEL%";
                 }
                 catch
                 {
-                    // If Event Log fails, we already logged to file
+                    
                 }
             }
             catch (Exception ex)
@@ -1032,7 +1030,7 @@ exit %ERRORLEVEL%";
                 }
                 catch
                 {
-                    // If all else fails, we can't do much more
+                    
                 }
             }
         }

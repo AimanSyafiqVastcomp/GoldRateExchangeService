@@ -1,6 +1,5 @@
 ﻿const puppeteer = require('puppeteer');
 
-// Main function to extract data
 async function extractData(site, url) {
     // Launch browser
     const browser = await puppeteer.launch({
